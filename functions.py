@@ -77,6 +77,22 @@ def DBQITE(iters, H, step, state):
         newState[i+1,:] = newState[i+1,:]/np.sqrt(np.conj(newState[i+1,:])@newState[i+1,:])
     return newState
 
+def DBQITE_thirdOrder(iters, H, step, state):
+    """
+    DBQITE 3rd order algorithm.
+    """
+    phi = 0.5*(np.sqrt(5)-1)
+    newState = np.empty((iters+1,len(state)), dtype=complex)
+    newState[0,:] = state
+    for i in range(iters):
+        rho = np.outer(newState[i,:], newState[i,:].conj())
+        ref1 = sp.linalg.expm(1j*phi*np.sqrt(step)*rho)
+        ref2 = sp.linalg.expm(-1j*(phi+1)*np.sqrt(step)*rho)
+        U = sp.linalg.expm(1j*phi*np.sqrt(step)*H) @ ref1 @ sp.linalg.expm(-1j*np.sqrt(step)*H) @ ref2 @ sp.linalg.expm(1j*(1-phi)*np.sqrt(step)*H)
+        newState[i+1,:] = U@newState[i,:]
+        newState[i+1,:] = newState[i+1,:]/np.sqrt(np.conj(newState[i+1,:])@newState[i+1,:])
+    return newState
+
 
 def thermalStatePrepComparison(beta, H, nqubits, method, step = 1e-2):
     """
@@ -89,6 +105,8 @@ def thermalStatePrepComparison(beta, H, nqubits, method, step = 1e-2):
         newState = DBI(iters, H, step, initState)
     elif method == 'DBQITE':
         newState = DBQITE(iters, H, step, initState)
+    elif method == 'DBQITE_thirdOrder':
+        newState = DBQITE_thirdOrder(iters, H, step, initState)
     fidelity = np.abs(UJFidelity(tfd, newState[-1,:]))
 
     return fidelity
@@ -149,6 +167,8 @@ def optimalDBI(H, initState, refState, method = "DBI", scheduling = "Fidelity",i
             state = DBI(1,H,s,state)[-1,:]
         elif method == "DBQITE":
             state = DBQITE(1,H,s,state)[-1,:]
+        elif method == "DBQITE_thirdOrder":
+            state = DBQITE_thirdOrder(1,H,s,state)[-1,:]
         fidelity[i+1] = UJFidelity(refState, state)
         if fidelity[i+1] > 1 - 1e-3:
             fidelity[i+1:] = 1
