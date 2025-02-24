@@ -196,7 +196,7 @@ def thermalStatePrepOptimal(beta, H, nqubits, method = "DBI", scheduling = "Ener
         elif scheduling == "Energy":
             s = optimalEnergyStep(H, initState)
         totalStepping += s
-        # Use optimal time stepping until the it is bigger than beta/2 and then adjust the last step
+        # Use optimal time stepping until the total time is bigger than beta/2 and then adjust the last step
         if totalStepping > beta/2:
             s = s - totalStepping + beta/2
         if method == "DBI":
@@ -221,3 +221,26 @@ def defaultStep(H):
     norm = eigs[-1]
     s = delta/(12*norm**3)
     return s
+
+def bestApproximatingStep(H, state, tau):
+    E = np.conj(state)@H@state
+    V = variance(H, state)
+    denominator = 1+E*tau
+    numerator = np.sqrt((1-E*tau)**2+V*tau**2)
+    s = 1/np.sqrt(V)*np.arccos(denominator/numerator)
+
+    return s
+
+def thermalStatePrepBest(beta, H, nqubits, method ='DBI', K = 10):
+    initState = maxEntangledState(nqubits)
+    tfd = TFD(beta, H, initState)
+    for i in range(K):
+        s = bestApproximatingStep(H/K, initState, beta/2)
+        if method == 'DBI':
+            initState = DBI(1,H,s,initState)[-1,:]
+        elif method == 'DBQITE':
+            initState = DBQITE(1,H,s,initState)[-1,:]
+        elif method == 'DBQITE_thirdOrder':
+            initState = DBQITE_thirdOrder(1,H,s,initState)[-1,:]
+    fidelity = Fidelity(tfd, initState)
+    return fidelity
