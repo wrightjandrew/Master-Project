@@ -13,6 +13,12 @@ def maxEntangledState(nqubits):
     
     return V/np.linalg.norm(V)
 
+def Fidelity(state1, state2):
+    """
+    Fidelity between two states.
+    """
+    return np.abs(np.conj(state1)@state2)**2
+
 def UJFidelity(state1, state2):
     """
     Uhlmann-Josza fidelity between two states.
@@ -174,6 +180,37 @@ def optimalDBI(H, initState, refState, method = "DBI", scheduling = "Fidelity",i
             fidelity[i+1:] = 1
             i = iters
     return fidelity, state, steps
+
+def thermalStatePrepOptimal(beta, H, nqubits, method = "DBI", scheduling = "Energy"):
+    """
+    Prepares the TFD state at temperature beta and compares it with the final state obtained by the DBI or DBQITE algorithm.
+    """
+    initState = maxEntangledState(nqubits)
+    tfd = TFD(beta, H, initState)
+    totalStepping = 0
+    iters = 0
+    while totalStepping < beta/2:
+
+        if scheduling == "Fidelity":
+            s = optimalFidelityStep(H, initState, sp.linalg.eigvalsh(H)[0])
+        elif scheduling == "Energy":
+            s = optimalEnergyStep(H, initState)
+        totalStepping += s
+        # Use optimal time stepping until the it is bigger than beta/2 and then adjust the last step
+        if totalStepping > beta/2:
+            s = s - totalStepping + beta/2
+        if method == "DBI":
+            initState = DBI(1,H,s,initState)[-1,:]
+        elif method == "DBQITE":
+            initState = DBQITE(1,H,s,initState)[-1,:]
+        elif method == "DBQITE_thirdOrder":
+            initState = DBQITE_thirdOrder(1,H,s,initState)[-1,:]
+        
+        iters += 1
+
+    fidelity = Fidelity(tfd, initState)
+
+    return fidelity, iters
 
 def defaultStep(H):
     """
