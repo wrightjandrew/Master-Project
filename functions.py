@@ -225,8 +225,10 @@ def defaultStep(H):
 def bestApproximatingStep(H, state, tau):
     E = np.conj(state)@H@state
     V = variance(H, state)
-    denominator = 1+E*tau
-    numerator = np.sqrt((1-E*tau)**2+V*tau**2)
+    denominator = 1-E*tau
+    # numerator = (np.eye(len(state))-tau*H)@state
+    # numerator = np.linalg.norm(numerator)
+    numerator = np.sqrt((1-E*tau)**2 + V*tau**2)
     s = 1/np.sqrt(V)*np.arccos(denominator/numerator)
 
     return s
@@ -235,12 +237,78 @@ def thermalStatePrepBest(beta, H, nqubits, method ='DBI', K = 10):
     initState = maxEntangledState(nqubits)
     tfd = TFD(beta, H, initState)
     for i in range(K):
-        s = bestApproximatingStep(H/K, initState, beta/2)
+        s = bestApproximatingStep(H, initState, beta/(2*K))
         if method == 'DBI':
-            initState = DBI(1,H,s,initState)[-1,:]
+            initState = DBI(1,H,s,initState)[-1]
         elif method == 'DBQITE':
-            initState = DBQITE(1,H,s,initState)[-1,:]
+            initState = DBQITE(1,H,s,initState)[-1]
         elif method == 'DBQITE_thirdOrder':
-            initState = DBQITE_thirdOrder(1,H,s,initState)[-1,:]
-    fidelity = Fidelity(tfd, initState)
+            initState = DBQITE_thirdOrder(1,H,s,initState)[-1]
+    fidelity = UJFidelity(tfd, initState)
     return fidelity
+
+def c_kl (k,l):
+    if l == 1:
+        return 1
+    else:
+        return (-1)**(l-1)*(sp.special.comb(2*k+2,2*l)-sp.special.comb(2*k+1,2*l-1))
+    
+def d_kl (k,l):
+    if l == 0:
+        return 1
+    elif (4*l == 2*k+2):
+        return (-1)**(l-1)*(sp.special.comb(2*k+1,2*l))
+    else:
+        return (-1)**(l-1)*(sp.special.comb(2*k+2,2*l)+sp.special.comb(2*k+1,2*l+1))
+    
+def moment(H, state, k):
+    """
+    k-th moment of the Hamiltonian in the state.
+    """
+    E = np.conj(state)@H@state
+    operator = np.eye(len(H), dtype=complex)
+    for i in range(k):
+        operator @= (H - E*np.eye(len(H)))
+    val = np.conj(state)@operator@state
+    return np.real(val)
+
+def expectation(H, state,k):
+    """
+    k-th moment of the Hamiltonian in the state.
+    """
+    operator = np.eye(len(H), dtype=complex)
+    for i in range(k):
+        operator @= H
+    val = np.conj(state)@operator@state
+    return np.real(val)
+
+def energyDiffApproximation(s, H, state, k):
+    evenTerm = 0
+    oddTerm = 0
+    moments = np.empty(2*k+2+1)
+    for i in range(len(moments)):
+        moments[i] = moment(H, state, i)
+    for i in range(k+1):
+        coeffEven = (-s)**k/(sp.special.factorial(2*k))
+        coeffOdd = (-1)**k *s**((2*k+1)/2)/(sp.special.factorial(2*k+1))
+        for l in range(k):
+            evenTerm += coeffEven*c_kl(k,l)*moments[2*k+1-2*l]*moments[2*l]
+            oddTerm += coeffOdd*d_kl(k,l)*moments[2*k+2-2*l]*moments[2*l]
+        oddTerm += coeffOdd*d_kl(k,k)*moments[2]*moments[2*k]
+
+    return -2*(1-np.cos(np.sqrt(s)))*evenTerm - 2*np.sin(np.sqrt(s))*oddTerm
+        
+    
+def energyDiffApproximation2(t, H, state, order):
+    val = 0
+    E = np.real(np.conj(state)@H@state)
+    for k in range(order+1):
+        for l in range(order+1):    
+            for s in range(1,order+1):
+                if (k+l+s <= order):
+                    coeff = (-1)**l*(1j)**(k+l)*t**(k+l+s)/(sp.special.factorial(k)*sp.special.factorial(s))*expectation(H, state, l)
+                    val += coeff*E/(sp.special.factorial(2*s))*expectation(H, state, k)
+                    if (k+l+s %2 == 0):
+                        val += coeff*(-1)**s*1j**s/(sp.special.factorial(s))*moment(H, state, k+1)
+
+    return np.real(val)
