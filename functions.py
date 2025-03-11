@@ -63,7 +63,7 @@ def reflectionOperator(state, step):
     return sp.linalg.expm(1j*np.sqrt(step)*rho)
 
 def unitaryRecursion(ham, refOperator, step):
-    """
+    """ 
     Unitary recursion for the DBQITE algorithm.
     """
     U = sp.linalg.expm(1j*np.sqrt(step)*ham) @ refOperator @ sp.linalg.expm(-1j*np.sqrt(step)*ham)
@@ -123,7 +123,7 @@ def variance(H, state):
     """
     E = np.conj(state)@H@state
     val = np.conj(state)@H@H@state
-    return val - E**2
+    return np.real(val - E**2)
 
 def skewness(H, V, state):
     """
