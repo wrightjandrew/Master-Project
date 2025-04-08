@@ -1,15 +1,16 @@
 import scipy as sp
 import numpy as np
 
-def maxEntangledState(nqubits):
+def maxEntangledState(nqubits, eigenvectors, coeffs = None):
     """
     Creates the maximally entangled state of nqubits of a system + nqubits of a reference system.
     """
-    V = np.zeros(2**(2*nqubits))
+    V = np.zeros(2**(2*nqubits), dtype=complex)
     for i in range(2**nqubits):
-        v = np.zeros(2**nqubits)
-        v[i] = 1
-        V += np.kron(v,v) 
+        v = eigenvectors[:,i]
+        if (coeffs is not None):
+            v[i] *= coeffs[i]
+        V += np.kron(v,v)
     
     return V/np.linalg.norm(V)
 
@@ -25,15 +26,20 @@ def UJFidelity(state1, state2):
     """
     rho = np.outer(state1, state1.conj())
     sigma = np.outer(state2, state2.conj())
-    return np.trace(sp.linalg.sqrtm(sp.linalg.sqrtm(rho)@sigma@sp.linalg.sqrtm(rho)))**2
+    return np.real(np.trace(sp.linalg.sqrtm(sp.linalg.sqrtm(rho)@sigma@sp.linalg.sqrtm(rho)))**2)
 
 def TFD(beta, ham, state):
     """
     Returns the Thermofield double state at inverse temperature beta.
+    Uses sparse matrix exponential if ham is sparse.
     """
-    tfd = sp.linalg.expm(-beta*ham/2)@state
-    normalization = np.sqrt(np.conj(tfd)@tfd)
-    return 1/normalization*tfd
+    if sp.sparse.issparse(ham):
+        tfd = sp.sparse.linalg.expm_multiply(-beta * ham / 2, state)
+    else:
+        tfd = sp.linalg.expm(-beta * ham / 2) @ state
+    
+    normalization = np.sqrt(np.conj(tfd) @ tfd)
+    return tfd / normalization
 
 def commutator(A,B):
     """
@@ -123,7 +129,7 @@ def variance(H, state):
     """
     E = np.conj(state)@H@state
     val = np.conj(state)@H@H@state
-    return np.real(val - E**2)
+    return np.real(val - E**2) 
 
 def skewness(H, V, state):
     """
@@ -225,16 +231,16 @@ def defaultStep(H):
 def bestApproximatingStep(H, state, tau):
     E = np.conj(state)@H@state
     V = variance(H, state)
-    denominator = 1-E*tau
+    numerator = 1-E*tau
     # numerator = (np.eye(len(state))-tau*H)@state
     # numerator = np.linalg.norm(numerator)
-    numerator = np.sqrt((1-E*tau)**2 + V*tau**2)
-    s = 1/np.sqrt(V)*np.arccos(denominator/numerator)
+    denominator = np.sqrt((1-E*tau)**2 + V*tau**2)
+    s = 1/np.sqrt(V)*np.arccos(numerator/denominator)
 
     return s
 
 def thermalStatePrepBest(beta, H, nqubits, method ='DBI', K = 10):
-    initState = maxEntangledState(nqubits)
+    initState = tfd0(nqubits)
     tfd = TFD(beta, H, initState)
     for i in range(K):
         s = bestApproximatingStep(H, initState, beta/(2*K))
@@ -244,8 +250,31 @@ def thermalStatePrepBest(beta, H, nqubits, method ='DBI', K = 10):
             initState = DBQITE(1,H,s,initState)[-1]
         elif method == 'DBQITE_thirdOrder':
             initState = DBQITE_thirdOrder(1,H,s,initState)[-1]
-    fidelity = UJFidelity(tfd, initState)
+    #fidelity = UJFidelity(tfd, initState)
+    fidelity = Fidelity(tfd, initState)
     return fidelity
+
+def thermalStatePrepKNumbers(beta, eps, H, nqubits, method ='DBI', K = 0):
+    initState = tfd0(nqubits)
+
+    tfd = TFD(beta, H, initState)
+    fidelity = Fidelity(tfd, initState)
+    while fidelity < 1-eps:
+        K += 1
+        initState = tfd0(nqubits)
+
+        for i in range(K):
+            s = bestApproximatingStep(H, initState, beta/(2*K))
+            if method == 'DBI':
+                initState = DBI(1,H,s,initState)[-1]
+            elif method == 'DBQITE':
+                initState = DBQITE(1,H,s,initState)[-1]
+            elif method == 'DBQITE_thirdOrder':
+                initState = DBQITE_thirdOrder(1,H,s,initState)[-1]
+        
+        #fidelity = UJFidelity(tfd, initState)
+        fidelity = Fidelity(tfd, initState)
+    return K
 
 def c_kl (k,l):
     if l == 1:
@@ -312,3 +341,108 @@ def energyDiffApproximation2(t, H, state, order):
                         val += coeff*(-1)**s*1j**s/(sp.special.factorial(s))*moment(H, state, k+1)
 
     return np.real(val)
+
+def decomposeInEigenBasis(eigenvectors, state):
+    n = len(eigenvectors)
+    coeff = np.zeros(n, dtype = complex)
+    for i in range(n):
+        coeff[i] = state.conj().T @ eigenvectors[:,i]
+    return coeff
+
+def energy(H, state):
+    if state.ndim == 1:
+        return np.real(np.conj(state).T @ H @ state)
+    elif state.ndim == 2: 
+        return np.real(np.trace(state @ H))
+    else:
+        raise ValueError("State must be either a vector or a square matrix.")
+
+def countOnes(n):
+    binary = bin(n)
+    count = 0
+    for i in range(len(binary)):
+        if binary[i] == '1':
+            count += 1
+    return count
+
+def tfd0(n):
+    tfd = np.zeros(2**(2*n))
+    for i in range(2**n):
+        state = np.zeros(2**n)
+        state[i] = 1
+        state2 = np.zeros(2**n)
+        state2[2**n-1-i] = 1
+        ones = countOnes(i)
+        if ones%2 == 0:
+            sign = 1
+        else:
+            sign = -1
+
+        tfd += sign*np.kron(state, state2)
+    return tfd/np.sqrt(2**n)    
+
+def matrixPolynomialScheduling(state, H, coeff):
+
+    E = energy(H, state)
+    V = variance(H, state)
+    # if E == 0:
+    #     s = -1/ np.sqrt(V) * np.arccos( np.abs(E-coeff) / np.sqrt(V + np.abs(E-coeff)**2) )
+    #     theta = np.angle ( (E-coeff) / np.abs(E-coeff) )
+    # else:
+    #     # s = -np.sign(E) / np.sqrt(V) * np.arccos( np.abs(E-coeff) / np.sqrt(V + np.abs(E-coeff)**2) )
+    #     # theta = np.angle ( np.sign(E)*(E-coeff) / np.abs(E-coeff) )
+    s = -1 / np.sqrt(V) * np.arccos( np.abs(E-coeff) / np.sqrt(V + np.abs(E-coeff)**2) )
+    theta = np.angle ( (E-coeff) / np.abs(E-coeff) )
+    return s, theta
+
+def matrixPolynomialEvolution(initState, H, coeffs):
+
+    steps = len(coeffs)
+    state = initState.copy()
+    I = np.eye(len(state))
+
+    for i in range(steps):
+        
+        operator = (H-coeffs[i]*I)
+        state = operator @ state
+
+    state = state / np.linalg.norm(state)
+    return state
+
+def matrixPolynomialEvolutionDBI(initState, H, coeffs):
+
+    steps = len(coeffs)
+    state = initState.copy()
+
+    for i in range(steps):
+
+        coeff = coeffs[i]
+        s, theta = matrixPolynomialScheduling(state, H, coeff)
+        rho = np.outer(state, state.conj())
+        W = commutator(rho, H)
+        state = sp.linalg.expm(1j*theta*rho) @ sp.linalg.expm(s*W) @ state
+
+    state = state / np.linalg.norm(state)
+    return state
+
+def truncatedExponentialPoly(N, s):
+    return [s**k/ sp.special.factorial(k) for k in range(N + 1)]
+
+def findRoots(N, s):
+    coefficients = truncatedExponentialPoly(N, s)
+    roots = np.roots(coefficients[::-1])  # highest degree first
+    
+    return roots
+
+def thermalStatePrepMatrixPolynomial(H, nqubits, beta, order):
+    """
+    Prepares the TFD state at temperature beta and compares it with the final state obtained by the DBI or DBQITE algorithm.
+    """
+    initState = tfd0(nqubits)
+    tfd = TFD(beta, H, initState)
+    coeffs = findRoots(order, -beta/2)
+
+    newState = matrixPolynomialEvolutionDBI(initState, H, coeffs)
+    fidelity = Fidelity(tfd, newState)
+
+    return fidelity
