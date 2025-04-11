@@ -165,7 +165,7 @@ def optimalFidelityStep(H, state, lam0):
 
 def optimalDBI(H, initState, refState, method = "DBI", scheduling = "Fidelity",iters = 20):
     fidelity = np.empty(iters+1)
-    fidelity[0] = UJFidelity(refState, initState)
+    fidelity[0] = np.abs(refState.conj().T @ initState)**2
     state = initState
     E0 = sp.linalg.eigvalsh(H)[0]
     steps = np.empty(iters)
@@ -181,7 +181,7 @@ def optimalDBI(H, initState, refState, method = "DBI", scheduling = "Fidelity",i
             state = DBQITE(1,H,s,state)[-1,:]
         elif method == "DBQITE_thirdOrder":
             state = DBQITE_thirdOrder(1,H,s,state)[-1,:]
-        fidelity[i+1] = UJFidelity(refState, state)
+        fidelity[i+1] =  np.abs(refState.conj().T @ state)**2
         if fidelity[i+1] > 1 - 1e-3:
             fidelity[i+1:] = 1
             i = iters
@@ -409,19 +409,20 @@ def matrixPolynomialEvolution(initState, H, coeffs):
     state = state / np.linalg.norm(state)
     return state
 
-def matrixPolynomialEvolutionDBI(initState, H, coeffs):
+def matrixPolynomialEvolutionDBI(initState, H, coeffs, method = "DBI"):
 
     steps = len(coeffs)
     state = initState.copy()
 
     for i in range(steps):
-
         coeff = coeffs[i]
         s, theta = matrixPolynomialScheduling(state, H, coeff)
         rho = np.outer(state, state.conj())
         W = commutator(rho, H)
-        state = sp.linalg.expm(1j*theta*rho) @ sp.linalg.expm(s*W) @ state
-
+        if method == "DBI":
+            state = sp.linalg.expm(1j*theta*rho) @ sp.linalg.expm(s*W) @ state
+        elif method == "DBQITE":
+            state = sp.linalg.expm(-1j*theta*rho) @ sp.linalg.expm(1j*np.sqrt(np.abs(s))*H) @ sp.linalg.expm(1j*np.sqrt(np.abs(s))*rho) @ sp.linalg.expm(-1j*np.sqrt(np.abs(s))*H) @ state
     state = state / np.linalg.norm(state)
     return state
 
