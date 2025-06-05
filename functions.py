@@ -16,16 +16,14 @@ def maxEntangledState(nqubits, eigenvectors, coeffs = None):
 
 def Fidelity(state1, state2):
     """
-    Fidelity between two states.
+    Fidelity between two pure states.
     """
     return np.abs(np.conj(state1)@state2)**2
 
-def UJFidelity(state1, state2):
+def UJFidelity(rho, sigma):
     """
     Uhlmann-Josza fidelity between two states.
     """
-    rho = np.outer(state1, state1.conj())
-    sigma = np.outer(state2, state2.conj())
     return np.real(np.trace(sp.linalg.sqrtm(sp.linalg.sqrtm(rho)@sigma@sp.linalg.sqrtm(rho)))**2)
 
 def TFD(beta, ham, state):
@@ -61,6 +59,12 @@ def DBI(iters, H, step, state):
         newState[i+1] = newState[i+1]/np.sqrt(np.conj(newState[i+1])@newState[i+1])
     return newState
 
+def DBIComplex(state, H, step, theta):
+    rho = np.outer(state, state.conj())
+    comm = commutator(rho, H)
+    newState = sp.linalg.expm(1j*theta*rho) @ sp.linalg.expm(step*comm) @ state
+    return newState
+
 def reflectionOperator(state, step):
     """
     Reflection operator for the DBQITE algorithm.
@@ -75,7 +79,7 @@ def unitaryRecursion(ham, refOperator, step):
     U = sp.linalg.expm(1j*np.sqrt(step)*ham) @ refOperator @ sp.linalg.expm(-1j*np.sqrt(step)*ham)
     return U
 
-def DBQITE(iters, H, step, state):
+def DBQITE(iters, H, step, state, trotterization = 1):
     """
     DBQITE algorithm.
     """
@@ -83,13 +87,15 @@ def DBQITE(iters, H, step, state):
     newState = np.empty((iters+1,len(state)), dtype=complex)
     newState[0,:] = state
     for i in range(iters):
-        ref = reflectionOperator(newState[i,:], step)
-        U = unitaryRecursion(H, ref, step)
+        U = np.eye(len(state), dtype=complex)
+        for j in range(trotterization):
+            ref = reflectionOperator(newState[i,:], step/trotterization)
+            U = unitaryRecursion(H, ref, step/trotterization) @ U
         newState[i+1,:] = U@newState[i,:]
         newState[i+1,:] = newState[i+1,:]/np.sqrt(np.conj(newState[i+1,:])@newState[i+1,:])
     return newState
 
-def DBQITE_thirdOrder(iters, H, step, state):
+def DBQITE_thirdOrder(iters, H, step, state, trotterization = 1):
     """
     DBQITE 3rd order algorithm.
     """
@@ -105,6 +111,21 @@ def DBQITE_thirdOrder(iters, H, step, state):
         newState[i+1,:] = newState[i+1,:]/np.sqrt(np.conj(newState[i+1,:])@newState[i+1,:])
     return newState
 
+def DBQITE_thirdOrderYudai(iters, H, step, state, trotterization = 1):
+    """
+    DBQITE 3rd order algorithm.
+    """
+    phi = (np.sqrt(5)+1)/2
+    newState = np.empty((iters+1,len(state)), dtype=complex)
+    newState[0,:] = state
+    for i in range(iters):
+        rho = np.outer(newState[i,:], newState[i,:].conj())
+        ref1 = sp.linalg.expm(1j*(1+phi)/np.sqrt(phi)*np.sqrt(step)*rho)
+        ref2 = sp.linalg.expm(-1j*(phi+1)/np.sqrt(phi)*np.sqrt(step)*rho)
+        U = sp.linalg.expm(1j*np.sqrt(phi)*np.sqrt(step)*H) @ ref1 @ sp.linalg.expm(-1j*np.sqrt(step)*H/np.sqrt(phi)) @ ref2 @ sp.linalg.expm(-1j*np.sqrt(phi)*np.sqrt(step)*H)
+        newState[i+1,:] = U@newState[i,:]
+        newState[i+1,:] = newState[i+1,:]/np.sqrt(np.conj(newState[i+1,:])@newState[i+1,:])
+    return newState
 
 def thermalStatePrepComparison(beta, H, nqubits, method, step = 1e-2):
     """
@@ -143,13 +164,27 @@ def skewness(H, V, state):
     return (val1+val2+val3)/V**(3/2)
 
 def optimalEnergyStep(H,  state):
+    # """
+    # Optimal step size at an iteration for minimizing the energy.
+    # """
+    # V = variance(H, state)
+    # S = skewness(H, V, state)
+    # alpha = np.arccos(1/(np.sqrt(1+0.25*S**2)))
+    # sOpt = (np.pi-2*alpha)/(4*np.sqrt(V))
+    # # alpha = np.arctan(-2/S)
+    # # sOpt = -alpha/(2*np.sqrt(V))
     """
     Optimal step size at an iteration for minimizing the energy.
     """
     V = variance(H, state)
     S = skewness(H, V, state)
-    alpha = np.arccos(1/(np.sqrt(1+0.25*S**2)))
-    sOpt = (np.pi-2*alpha)/(4*np.sqrt(V))
+    # alpha = np.arccos(1/(np.sqrt(1+0.25*S**2)))
+    # sOpt = (np.pi-2*alpha)/(4*np.sqrt(V))
+    alpha = np.arctan(-2/S)
+    if alpha > 0:
+        alpha = -np.pi + alpha
+
+    sOpt = -alpha/(2*np.sqrt(V))
     return sOpt
 
 def optimalFidelityStep(H, state, lam0):
@@ -169,6 +204,8 @@ def optimalDBI(H, initState, refState, method = "DBI", scheduling = "Fidelity",i
     state = initState
     E0 = sp.linalg.eigvalsh(H)[0]
     steps = np.empty(iters)
+    energy = np.empty(iters+1)
+    energy[0] = np.real(np.conj(state) @ H @ state)
     for i in range(iters):
         if scheduling == "Fidelity":
             s = optimalFidelityStep(H, state, E0)
@@ -182,10 +219,11 @@ def optimalDBI(H, initState, refState, method = "DBI", scheduling = "Fidelity",i
         elif method == "DBQITE_thirdOrder":
             state = DBQITE_thirdOrder(1,H,s,state)[-1,:]
         fidelity[i+1] =  np.abs(refState.conj().T @ state)**2
+        energy[i+1] = np.real(np.conj(state) @ H @ state)
         if fidelity[i+1] > 1 - 1e-3:
             fidelity[i+1:] = 1
             i = iters
-    return fidelity, state, steps
+    return fidelity, state, steps, energy
 
 def thermalStatePrepOptimal(beta, H, nqubits, method = "DBI", scheduling = "Energy"):
     """
