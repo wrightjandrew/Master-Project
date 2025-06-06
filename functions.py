@@ -1,5 +1,6 @@
 import scipy as sp
 import numpy as np
+import numbers
 
 def maxEntangledState(nqubits, eigenvectors, coeffs = None):
     """
@@ -83,16 +84,18 @@ def DBQITE(iters, H, step, state, trotterization = 1):
     """
     DBQITE algorithm.
     """
-    ref = reflectionOperator(state, step)
     newState = np.empty((iters+1,len(state)), dtype=complex)
     newState[0,:] = state
+    sign = np.sign(step)
+    step = np.abs(step)
+    step = step / trotterization
     for i in range(iters):
-        U = np.eye(len(state), dtype=complex)
-        for j in range(trotterization):
-            ref = reflectionOperator(newState[i,:], step/trotterization)
-            U = unitaryRecursion(H, ref, step/trotterization) @ U
-        newState[i+1,:] = U@newState[i,:]
-        newState[i+1,:] = newState[i+1,:]/np.sqrt(np.conj(newState[i+1,:])@newState[i+1,:])
+        rho = np.outer(state, state.conj())
+        ref  = sp.linalg.expm(1j*sign*np.sqrt(step)*rho)
+        U = sp.linalg.expm(1j*sign*np.sqrt(step)*H) @ ref @ sp.linalg.expm(-1j*sign*np.sqrt(step)*H)
+        for _ in range(trotterization):
+            newState[i+1,:] = U@newState[i,:]
+            newState[i+1,:] = newState[i+1,:]/np.sqrt(np.conj(newState[i+1,:])@newState[i+1,:])
     return newState
 
 def DBQITE_thirdOrder(iters, H, step, state, trotterization = 1):
@@ -102,13 +105,25 @@ def DBQITE_thirdOrder(iters, H, step, state, trotterization = 1):
     phi = 0.5*(np.sqrt(5)-1)
     newState = np.empty((iters+1,len(state)), dtype=complex)
     newState[0,:] = state
+    sign = np.sign(step)
+    step = np.abs(step)
+    t = sign*np.sqrt(step)
+    step = step / trotterization
     for i in range(iters):
-        rho = np.outer(newState[i,:], newState[i,:].conj())
-        ref1 = sp.linalg.expm(1j*phi*np.sqrt(step)*rho)
-        ref2 = sp.linalg.expm(-1j*(phi+1)*np.sqrt(step)*rho)
-        U = sp.linalg.expm(1j*phi*np.sqrt(step)*H) @ ref1 @ sp.linalg.expm(-1j*np.sqrt(step)*H) @ ref2 @ sp.linalg.expm(1j*(1-phi)*np.sqrt(step)*H)
-        newState[i+1,:] = U@newState[i,:]
-        newState[i+1,:] = newState[i+1,:]/np.sqrt(np.conj(newState[i+1,:])@newState[i+1,:])
+        # rho = np.outer(newState[i,:], newState[i,:].conj())
+        # ref1 = sp.linalg.expm(1j*phi*sign*np.sqrt(step)*rho)
+        # ref2 = sp.linalg.expm(-1j*(phi+1)*sign*np.sqrt(step)*rho)
+        # U = sp.linalg.expm(1j*phi*sign*np.sqrt(step)*H) @ ref1 @ sp.linalg.expm(-1j*sign*np.sqrt(step)*H) @ ref2 @ sp.linalg.expm(1j*(1-phi)*sign*np.sqrt(step)*H)
+        rho = np.outer(state, state.conj())
+        phi = (np.sqrt(5)-1)/2
+        phi2 = (np.sqrt(5)+1)/2
+        phi3 = (3-np.sqrt(5))/2
+        ref1 = sp.linalg.expm(1j*phi*t*rho)
+        ref2 = sp.linalg.expm(-1j*phi2*t*rho)
+        U = sp.linalg.expm(1j*phi*t*H) @ ref1 @ sp.linalg.expm(-1j*t*H) @ ref2 @ sp.linalg.expm(1j*phi3*t*H)
+        for _ in range(trotterization):
+            newState[i+1,:] = U@newState[i,:]
+            newState[i+1,:] = newState[i+1,:]/np.sqrt(np.conj(newState[i+1,:])@newState[i+1,:])
     return newState
 
 def DBQITE_thirdOrderYudai(iters, H, step, state, trotterization = 1):
@@ -118,13 +133,17 @@ def DBQITE_thirdOrderYudai(iters, H, step, state, trotterization = 1):
     phi = (np.sqrt(5)+1)/2
     newState = np.empty((iters+1,len(state)), dtype=complex)
     newState[0,:] = state
+    sign = np.sign(step)
+    step = np.abs(step)
+    step = step / trotterization
     for i in range(iters):
         rho = np.outer(newState[i,:], newState[i,:].conj())
-        ref1 = sp.linalg.expm(1j*(1+phi)/np.sqrt(phi)*np.sqrt(step)*rho)
-        ref2 = sp.linalg.expm(-1j*(phi+1)/np.sqrt(phi)*np.sqrt(step)*rho)
-        U = sp.linalg.expm(1j*np.sqrt(phi)*np.sqrt(step)*H) @ ref1 @ sp.linalg.expm(-1j*np.sqrt(step)*H/np.sqrt(phi)) @ ref2 @ sp.linalg.expm(-1j*np.sqrt(phi)*np.sqrt(step)*H)
-        newState[i+1,:] = U@newState[i,:]
-        newState[i+1,:] = newState[i+1,:]/np.sqrt(np.conj(newState[i+1,:])@newState[i+1,:])
+        ref1 = sp.linalg.expm(1j*(1+phi)/np.sqrt(phi)*sign*np.sqrt(step)*rho)
+        ref2 = sp.linalg.expm(-1j*(1+phi)/np.sqrt(phi)*sign*np.sqrt(step)*rho)
+        U = sp.linalg.expm(1j*np.sqrt(phi)*sign*np.sqrt(step)*H) @ ref1 @ sp.linalg.expm(-1j*sign*np.sqrt(step)/np.sqrt(phi)*H) @ ref2 @ sp.linalg.expm(-1j*np.sqrt(phi)*sign*np.sqrt(step)*H)
+        for _ in range(trotterization):
+            newState[i+1,:] = U@newState[i,:]
+            newState[i+1,:] = newState[i+1,:]/np.sqrt(np.conj(newState[i+1,:])@newState[i+1,:])
     return newState
 
 def thermalStatePrepComparison(beta, H, nqubits, method, step = 1e-2):
@@ -134,7 +153,7 @@ def thermalStatePrepComparison(beta, H, nqubits, method, step = 1e-2):
     initState = maxEntangledState(nqubits)
     tfd = TFD(beta, H, initState)
     iters = int(beta/(2*step))
-    if method == 'DBI':
+    if method == 'DBI': 
         newState = DBI(iters, H, step, initState)
     elif method == 'DBQITE':
         newState = DBQITE(iters, H, step, initState)
@@ -429,8 +448,13 @@ def matrixPolynomialScheduling(state, H, coeff):
     # else:
     #     # s = -np.sign(E) / np.sqrt(V) * np.arccos( np.abs(E-coeff) / np.sqrt(V + np.abs(E-coeff)**2) )
     #     # theta = np.angle ( np.sign(E)*(E-coeff) / np.abs(E-coeff) )
+    # if isinstance(coeff, numbers.Real):
+    #     s = -1 / np.sqrt(V) * np.arccos( (E-coeff) / np.sqrt(V + (E-coeff)**2) )
+    #     theta = 0
+    # else:
     s = -1 / np.sqrt(V) * np.arccos( np.abs(E-coeff) / np.sqrt(V + np.abs(E-coeff)**2) )
     theta = np.angle ( (E-coeff) / np.abs(E-coeff) )
+
     return s, theta
 
 def matrixPolynomialEvolution(initState, H, coeffs):
